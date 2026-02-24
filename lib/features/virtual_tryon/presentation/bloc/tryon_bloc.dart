@@ -42,11 +42,13 @@ class TryonBloc extends Bloc<TryonEvent, TryonState> {
     on<SetPersonImagePathEvent>(_onSetPersonImagePath);
     on<SelectClothingImageEvent>(_onSelectClothingImage);
     on<SetClothingUrlEvent>(_onSetClothingUrl);
+    on<SetClothingPathEvent>(_onSetClothingPath);
     on<ChangeProviderEvent>(_onChangeProvider);
     on<StartTryOnEvent>(_onStartTryOn);
     on<RetryTryOnEvent>(_onRetryTryOn);
     on<ResetTryonEvent>(_onResetTryon);
     on<ClearClothingEvent>(_onClearClothing);
+    on<UseResultAsBaseEvent>(_onUseResultAsBase);
   }
 
   Future<void> _onSelectPersonPhoto(
@@ -142,6 +144,20 @@ class TryonBloc extends Bloc<TryonEvent, TryonState> {
     _clothingItems[event.category] = ClothingSelection(
       imagePath: event.url,
       isUrl: true,
+    );
+    _emitCurrentState(emit);
+  }
+
+  void _onSetClothingPath(
+    SetClothingPathEvent event,
+    Emitter<TryonState> emit,
+  ) {
+    // Handle dress vs top/bottom conflicts
+    _handleClothingConflicts(event.category);
+
+    _clothingItems[event.category] = ClothingSelection(
+      imagePath: event.path,
+      isUrl: false,
     );
     _emitCurrentState(emit);
   }
@@ -367,6 +383,36 @@ class TryonBloc extends Bloc<TryonEvent, TryonState> {
       _clothingItems = {};
     }
     _emitCurrentState(emit);
+  }
+
+  Future<void> _onUseResultAsBase(
+    UseResultAsBaseEvent event,
+    Emitter<TryonState> emit,
+  ) async {
+    try {
+      // Download the result image to use as new base
+      final downloadedFile = await _downloadImage(event.resultImageUrl);
+
+      // Set it as the new person image
+      _personImage = UserImage(
+        path: downloadedFile.path,
+        fileName: downloadedFile.path.split('/').last,
+        size: 0,
+        aspectRatio: 1.0,
+      );
+      _isPersonUrl = false;
+
+      // Clear all clothing selections
+      _clothingItems = {};
+
+      // Emit the person selected state so user can choose new articles
+      _emitCurrentState(emit);
+    } catch (e) {
+      emit(TryonErrorState(
+        message: 'Failed to use result as base: $e',
+        canRetry: true,
+      ));
+    }
   }
 
   void _emitCurrentState(Emitter<TryonState> emit) {

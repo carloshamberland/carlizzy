@@ -59,8 +59,17 @@ class CreditsService {
       if (SupabaseService.isAuthenticated) {
         await _instance!._syncFromCloud();
       }
+    } else {
+      // Refresh prefs in case they were updated
+      _prefs = await SharedPreferences.getInstance();
     }
     return _instance!;
+  }
+
+  /// Reset the singleton instance (call on logout)
+  static void reset() {
+    _instance = null;
+    _prefs = null;
   }
 
   /// Check if user has used their free trial

@@ -1,4 +1,4 @@
-package com.wardrobe.wardrobe
+package com.teamcaio.muse
 
 import io.flutter.embedding.android.FlutterActivity
 

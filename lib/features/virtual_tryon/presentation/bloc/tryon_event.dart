@@ -41,6 +41,17 @@ class SetClothingUrlEvent extends TryonEvent {
   List<Object?> get props => [url, category];
 }
 
+/// Set clothing image from file path (camera/gallery)
+class SetClothingPathEvent extends TryonEvent {
+  final String path;
+  final String category;
+
+  const SetClothingPathEvent(this.path, {required this.category});
+
+  @override
+  List<Object?> get props => [path, category];
+}
+
 /// Set person image from URL (sample image)
 class SetPersonImageUrlEvent extends TryonEvent {
   final String url;
@@ -94,4 +105,14 @@ class ClearClothingEvent extends TryonEvent {
 
   @override
   List<Object?> get props => [category];
+}
+
+/// Use the current result image as the new base photo for adding more articles
+class UseResultAsBaseEvent extends TryonEvent {
+  final String resultImageUrl;
+
+  const UseResultAsBaseEvent(this.resultImageUrl);
+
+  @override
+  List<Object?> get props => [resultImageUrl];
 }

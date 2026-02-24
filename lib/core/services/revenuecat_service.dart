@@ -4,7 +4,7 @@ import 'package:purchases_ui_flutter/purchases_ui_flutter.dart';
 
 /// Service for managing in-app purchases via RevenueCat
 class RevenueCatService {
-  static const String _apiKey = 'test_K0JxzMpUkUPSMmftrzGrBvOksth';
+  static const String _apiKey = 'test_KOJxzMpUkUPSMmftrzGrBvOksth';
 
   // Entitlement IDs
   static const String entitlementPro = 'pro';

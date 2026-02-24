@@ -4,6 +4,9 @@
 *.pyc
 *.swp
 .DS_Store
+
+# Environment variables (contains API keys)
+.env
 .atom/
 .build/
 .buildlog/

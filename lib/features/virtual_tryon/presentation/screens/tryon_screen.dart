@@ -16,8 +16,33 @@ import '../bloc/tryon_state.dart';
 import '../widgets/ai_provider_selector.dart';
 import '../widgets/recent_photos_gallery.dart';
 
-class TryOnScreen extends StatelessWidget {
-  const TryOnScreen({super.key});
+class TryOnScreen extends StatefulWidget {
+  final String? initialPhotoPath;
+  final String? initialClothingPath;
+
+  const TryOnScreen({super.key, this.initialPhotoPath, this.initialClothingPath});
+
+  @override
+  State<TryOnScreen> createState() => _TryOnScreenState();
+}
+
+class _TryOnScreenState extends State<TryOnScreen> {
+  bool _initialDataSet = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_initialDataSet) {
+      _initialDataSet = true;
+      if (widget.initialPhotoPath != null) {
+        context.read<TryonBloc>().add(SetPersonImagePathEvent(widget.initialPhotoPath!));
+      }
+      if (widget.initialClothingPath != null) {
+        // Default to upper_body category for camera-taken clothing
+        context.read<TryonBloc>().add(SetClothingPathEvent(widget.initialClothingPath!, category: 'upper_body'));
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2181,10 +2206,37 @@ class _OptionButton extends StatelessWidget {
   }
 }
 
-class _ProcessingView extends StatelessWidget {
+class _ProcessingView extends StatefulWidget {
   final ProcessingTryOnState state;
 
   const _ProcessingView({required this.state});
+
+  @override
+  State<_ProcessingView> createState() => _ProcessingViewState();
+}
+
+class _ProcessingViewState extends State<_ProcessingView>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    )..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.08).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
 
   String _getCategoryDisplayName(String? category) {
     switch (category) {
@@ -2205,82 +2257,179 @@ class _ProcessingView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isMultiStep = state.totalSteps > 1;
-    final overallProgress = state.overallProgress;
-    final timeEstimate = state.totalSteps * 30; // ~30 seconds per item
+    final isMultiStep = widget.state.totalSteps > 1;
+    final overallProgress = widget.state.overallProgress;
+    final progress = isMultiStep ? overallProgress : widget.state.progress;
+    final percentage = (progress * 100).toInt();
 
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(ThemeConstants.spacingLarge),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            const Spacer(),
-          // Step indicator for multi-item generation
-          if (isMultiStep) ...[
-            Text(
-              'Creating your outfit',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFF4A3F35),
-                  ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Step ${state.currentStep} of ${state.totalSteps}: ${_getCategoryDisplayName(state.currentCategory)}',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF8B7355),
-                  ),
-            ),
-            const SizedBox(height: ThemeConstants.spacingLarge),
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFFF8F6F4),
+            Color(0xFFEDE8E3),
+            Color(0xFFF8F6F4),
           ],
-          Container(
-            width: 100,
-            height: 100,
-            decoration: BoxDecoration(
-              color: ThemeConstants.primaryColor.withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                SizedBox(
-                  width: 80,
-                  height: 80,
-                  child: CircularProgressIndicator(
-                    value: isMultiStep ? overallProgress : state.progress,
-                    strokeWidth: 4,
-                    backgroundColor: ThemeConstants.borderColor,
-                    valueColor: AlwaysStoppedAnimation(ThemeConstants.primaryColor),
+        ),
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Spacer(),
+              // Animated progress ring
+              ScaleTransition(
+                scale: _pulseAnimation,
+                child: Container(
+                  width: 180,
+                  height: 180,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        const Color(0xFF8B7355).withOpacity(0.1),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // Background ring
+                      SizedBox(
+                        width: 150,
+                        height: 150,
+                        child: CircularProgressIndicator(
+                          value: 1,
+                          strokeWidth: 8,
+                          backgroundColor: Colors.transparent,
+                          valueColor: AlwaysStoppedAnimation(
+                            const Color(0xFFD4C4B5).withOpacity(0.5),
+                          ),
+                        ),
+                      ),
+                      // Progress ring
+                      SizedBox(
+                        width: 150,
+                        height: 150,
+                        child: CircularProgressIndicator(
+                          value: progress,
+                          strokeWidth: 8,
+                          strokeCap: StrokeCap.round,
+                          backgroundColor: Colors.transparent,
+                          valueColor: const AlwaysStoppedAnimation(Color(0xFF8B7355)),
+                        ),
+                      ),
+                      // Percentage text
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '$percentage%',
+                            style: const TextStyle(
+                              fontSize: 42,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF4A3F35),
+                              letterSpacing: -1,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-                Text(
-                  '${((isMultiStep ? overallProgress : state.progress) * 100).toInt()}%',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
+              ),
+              const SizedBox(height: 40),
+              // Status text
+              if (isMultiStep) ...[
+                const Text(
+                  'Creating your look',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF4A3F35),
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF8B7355).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    'Step ${widget.state.currentStep} of ${widget.state.totalSteps} • ${_getCategoryDisplayName(widget.state.currentCategory)}',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF8B7355),
+                    ),
+                  ),
+                ),
+              ] else ...[
+                const Text(
+                  'Generating',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF4A3F35),
+                    letterSpacing: -0.5,
+                  ),
                 ),
               ],
-            ),
-          ),
-          const SizedBox(height: ThemeConstants.spacingXLarge),
-          Text(
-            state.statusMessage,
-            style: Theme.of(context).textTheme.titleMedium,
-            textAlign: TextAlign.center,
-          ),
-          const Spacer(flex: 2),
-          Text(
-            isMultiStep
-                ? 'This may take up to $timeEstimate seconds for ${state.totalSteps} items'
-                : 'This may take up to 30 seconds',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: ThemeConstants.textHintColor,
+              const SizedBox(height: 16),
+              Text(
+                widget.state.statusMessage.replaceAll('top: ', '').replaceAll('bottom: ', '').replaceAll('dress: ', ''),
+                style: TextStyle(
+                  fontSize: 15,
+                  color: const Color(0xFF4A3F35).withOpacity(0.6),
                 ),
-            textAlign: TextAlign.center,
+                textAlign: TextAlign.center,
+              ),
+              const Spacer(flex: 2),
+              // Tip at bottom
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.auto_awesome,
+                      color: Color(0xFFF59E0B),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        isMultiStep
+                            ? 'AI is styling ${widget.state.totalSteps} items for your perfect look'
+                            : 'AI is working its magic on your outfit',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: const Color(0xFF4A3F35).withOpacity(0.7),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
         ),
       ),
     );
@@ -2435,126 +2584,251 @@ class _ResultViewState extends State<_ResultView> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Header
+        // Header with home button
         Padding(
-          padding: const EdgeInsets.all(ThemeConstants.spacingMedium),
-          child: Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: const Color(0xFF8B7355).withOpacity(0.3),
-                  width: 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
+          padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
+          child: Row(
+            children: [
+              // Home button
+              IconButton(
+                onPressed: () {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                },
+                icon: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.08),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
-                ],
+                  child: const Icon(
+                    Icons.home_outlined,
+                    size: 24,
+                    color: Color(0xFF4A3F35),
+                  ),
+                ),
               ),
-              child: Text(
-                'Your New Look',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: const Color(0xFF4A3F35),
-                      fontWeight: FontWeight.w600,
+              const Spacer(),
+              // Title badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.auto_awesome,
+                      size: 18,
+                      color: Color(0xFFF59E0B),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Your New Look',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            color: const Color(0xFF4A3F35),
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ],
+                ),
               ),
-            ),
+              const Spacer(),
+              const SizedBox(width: 48), // Balance the home button
+            ],
           ),
         ),
 
-        // Result image
+        // Result image with white border
         Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(
               horizontal: ThemeConstants.spacingMedium,
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(ThemeConstants.radiusMedium),
-              child: CachedNetworkImage(
-                imageUrl: widget.state.result.resultImageUrl,
-                fit: BoxFit.contain,
-                placeholder: (_, __) => const Center(
-                  child: CircularProgressIndicator(),
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 20,
+                      spreadRadius: 2,
+                    ),
+                  ],
                 ),
-                errorWidget: (_, __, ___) => const Center(
-                  child: Icon(Icons.broken_image_outlined, size: 48),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: CachedNetworkImage(
+                    imageUrl: widget.state.result.resultImageUrl,
+                    fit: BoxFit.contain,
+                    placeholder: (_, __) => Container(
+                      color: const Color(0xFFF5F5F5),
+                      child: const Center(
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF8B7355),
+                        ),
+                      ),
+                    ),
+                    errorWidget: (_, __, ___) => Container(
+                      color: const Color(0xFFF5F5F5),
+                      child: const Center(
+                        child: Icon(Icons.broken_image_outlined, size: 48, color: Colors.grey),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
         ),
 
-        // Save buttons
-        Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: ThemeConstants.spacingLarge,
-            vertical: ThemeConstants.spacingSmall,
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _isSavingToPhotos || _savedToPhotos ? null : _saveToPhotos,
-                  icon: _isSavingToPhotos
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Icon(_savedToPhotos ? Icons.check : Icons.photo_library_outlined),
-                  label: Text(_savedToPhotos ? 'Saved' : 'Save to Photos'),
-                ),
-              ),
-              const SizedBox(width: ThemeConstants.spacingMedium),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _isSavingToApp || _savedToApp ? null : _saveToApp,
-                  icon: _isSavingToApp
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Icon(_savedToApp ? Icons.check : Icons.bookmark_outline),
-                  label: Text(_savedToApp ? 'Saved' : 'Save to App'),
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        // Actions
+        // Action buttons - two columns
         Padding(
           padding: const EdgeInsets.only(
             left: ThemeConstants.spacingLarge,
             right: ThemeConstants.spacingLarge,
             bottom: ThemeConstants.spacingLarge,
+            top: ThemeConstants.spacingSmall,
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    context.read<TryonBloc>().add(const ClearClothingEvent());
-                  },
-                  icon: const Icon(Icons.checkroom_outlined),
-                  label: const Text('Try Different'),
+              const Padding(
+                padding: EdgeInsets.only(left: 4, bottom: 10),
+                child: Text(
+                  'Save to',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF4A3F35),
+                  ),
                 ),
               ),
-              const SizedBox(width: ThemeConstants.spacingMedium),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    context.read<TryonBloc>().add(const ResetTryonEvent());
-                  },
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Start Over'),
-                ),
+              Row(
+                children: [
+                  // Left column - Save options
+                  Expanded(
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          height: 48,
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: _isSavingToPhotos || _savedToPhotos ? null : _saveToPhotos,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF8B7355),
+                              foregroundColor: Colors.white,
+                              disabledBackgroundColor: const Color(0xFF8B7355).withOpacity(0.5),
+                              disabledForegroundColor: Colors.white70,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            icon: _isSavingToPhotos
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                  )
+                                : Icon(_savedToPhotos ? Icons.check : Icons.photo_library_outlined, size: 20),
+                            label: Text(_savedToPhotos ? 'Saved' : 'Photos'),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          height: 48,
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: _isSavingToApp || _savedToApp ? null : _saveToApp,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF8B7355),
+                              foregroundColor: Colors.white,
+                              disabledBackgroundColor: const Color(0xFF8B7355).withOpacity(0.5),
+                              disabledForegroundColor: Colors.white70,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            icon: _isSavingToApp
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                  )
+                                : Icon(_savedToApp ? Icons.check : Icons.checkroom_outlined, size: 20),
+                            label: Text(_savedToApp ? 'Saved' : 'Wardrobe'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: ThemeConstants.spacingMedium),
+                  // Right column - Actions
+                  Expanded(
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          height: 48,
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              context.read<TryonBloc>().add(
+                                UseResultAsBaseEvent(widget.state.result.resultImageUrl),
+                              );
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              foregroundColor: const Color(0xFF4A3F35),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                side: const BorderSide(color: Color(0xFFD4C4B5)),
+                              ),
+                            ),
+                            icon: const Icon(Icons.add, size: 20),
+                            label: const Text('Add Article'),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          height: 48,
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              context.read<TryonBloc>().add(const ResetTryonEvent());
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF4A3F35),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            icon: const Icon(Icons.refresh, size: 20),
+                            label: const Text('Start Over'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

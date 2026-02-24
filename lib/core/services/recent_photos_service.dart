@@ -6,7 +6,8 @@ import 'supabase_service.dart';
 
 class RecentPhotosService {
   static const String _key = 'recent_model_photos';
-  static const int _maxPhotos = 4;
+  static const String _allKey = 'all_selfies';
+  static const int _maxRecentPhotos = 4;
 
   /// Get the directory for storing recent photos permanently
   static Future<Directory> _getPhotosDirectory() async {
@@ -18,12 +19,30 @@ class RecentPhotosService {
     return photosDir;
   }
 
-  /// Get the list of recently used model photos (filters out non-existent files)
+  /// Get the list of recently used model photos (max 4, filters out non-existent files)
   static Future<List<String>> getRecentPhotos() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString(_key);
-    if (jsonStr == null) return [];
+    final allPhotos = await getAllPhotos();
+    return allPhotos.take(_maxRecentPhotos).toList();
+  }
 
+  /// Get all saved selfies (filters out non-existent files)
+  static Future<List<String>> getAllPhotos() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString(_allKey);
+    if (jsonStr == null) {
+      // Migrate from old key if exists
+      final oldJsonStr = prefs.getString(_key);
+      if (oldJsonStr != null) {
+        await prefs.setString(_allKey, oldJsonStr);
+        return _filterValidPaths(oldJsonStr);
+      }
+      return [];
+    }
+
+    return _filterValidPaths(jsonStr);
+  }
+
+  static Future<List<String>> _filterValidPaths(String jsonStr) async {
     try {
       final List<dynamic> decoded = json.decode(jsonStr);
       final paths = decoded.cast<String>();
@@ -36,11 +55,6 @@ class RecentPhotosService {
         }
       }
 
-      // Update storage if we filtered some out
-      if (validPaths.length != paths.length) {
-        await prefs.setString(_key, json.encode(validPaths));
-      }
-
       return validPaths;
     } catch (_) {
       return [];
@@ -50,7 +64,7 @@ class RecentPhotosService {
   /// Add a photo to recent history, copying to permanent storage if needed
   static Future<void> addPhoto(String photoPath) async {
     final prefs = await SharedPreferences.getInstance();
-    final photos = await getRecentPhotos();
+    final photos = await getAllPhotos();
 
     String permanentPath = photoPath;
 
@@ -77,21 +91,8 @@ class RecentPhotosService {
     // Add to front
     photos.insert(0, permanentPath);
 
-    // Keep only max photos, delete old files
-    if (photos.length > _maxPhotos) {
-      final toRemove = photos.sublist(_maxPhotos);
-      for (final oldPath in toRemove) {
-        final oldFile = File(oldPath);
-        if (await oldFile.exists()) {
-          try {
-            await oldFile.delete();
-          } catch (_) {}
-        }
-      }
-    }
-
-    final trimmed = photos.take(_maxPhotos).toList();
-    await prefs.setString(_key, json.encode(trimmed));
+    // Save all photos (no limit)
+    await prefs.setString(_allKey, json.encode(photos));
 
     // Sync to cloud if authenticated
     if (SupabaseService.isAuthenticated) {
@@ -127,10 +128,30 @@ class RecentPhotosService {
     }
   }
 
+  /// Remove a specific photo
+  static Future<void> removePhoto(String photoPath) async {
+    final prefs = await SharedPreferences.getInstance();
+    final photos = await getAllPhotos();
+
+    // Remove from list
+    photos.remove(photoPath);
+
+    // Delete the file
+    final file = File(photoPath);
+    if (await file.exists()) {
+      try {
+        await file.delete();
+      } catch (_) {}
+    }
+
+    // Save updated list
+    await prefs.setString(_allKey, json.encode(photos));
+  }
+
   /// Clear all recent photos
   static Future<void> clearAll() async {
     final prefs = await SharedPreferences.getInstance();
-    final photos = await getRecentPhotos();
+    final photos = await getAllPhotos();
 
     // Delete all photo files
     for (final path in photos) {
@@ -143,5 +164,6 @@ class RecentPhotosService {
     }
 
     await prefs.remove(_key);
+    await prefs.remove(_allKey);
   }
 }

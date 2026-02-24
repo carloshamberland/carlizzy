@@ -3,7 +3,12 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 import 'supabase_service.dart';
+
+const _uuid = Uuid();
+const String _cloudSyncEnabledKey = 'cloud_sync_enabled';
+const String _cloudSyncAskedKey = 'cloud_sync_asked';
 
 /// Model for a saved outfit (generated result)
 class SavedOutfit {
@@ -12,6 +17,7 @@ class SavedOutfit {
   final DateTime createdAt;
   final String? description;
   final bool isSynced;
+  final bool isFavorite;
 
   SavedOutfit({
     required this.id,
@@ -19,6 +25,7 @@ class SavedOutfit {
     required this.createdAt,
     this.description,
     this.isSynced = false,
+    this.isFavorite = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -27,6 +34,7 @@ class SavedOutfit {
         'createdAt': createdAt.toIso8601String(),
         'description': description,
         'isSynced': isSynced,
+        'isFavorite': isFavorite,
       };
 
   factory SavedOutfit.fromJson(Map<String, dynamic> json) => SavedOutfit(
@@ -35,14 +43,16 @@ class SavedOutfit {
         createdAt: DateTime.parse(json['createdAt'] as String),
         description: json['description'] as String?,
         isSynced: json['isSynced'] as bool? ?? false,
+        isFavorite: json['isFavorite'] as bool? ?? false,
       );
 
-  SavedOutfit copyWith({bool? isSynced, String? imagePath}) => SavedOutfit(
+  SavedOutfit copyWith({bool? isSynced, String? imagePath, bool? isFavorite}) => SavedOutfit(
         id: id,
         imagePath: imagePath ?? this.imagePath,
         createdAt: createdAt,
         description: description,
         isSynced: isSynced ?? this.isSynced,
+        isFavorite: isFavorite ?? this.isFavorite,
       );
 }
 
@@ -54,6 +64,7 @@ class SavedArticle {
   final DateTime createdAt;
   final String? description;
   final bool isSynced;
+  final bool isFavorite;
 
   SavedArticle({
     required this.id,
@@ -62,6 +73,7 @@ class SavedArticle {
     required this.createdAt,
     this.description,
     this.isSynced = false,
+    this.isFavorite = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -71,6 +83,7 @@ class SavedArticle {
         'createdAt': createdAt.toIso8601String(),
         'description': description,
         'isSynced': isSynced,
+        'isFavorite': isFavorite,
       };
 
   factory SavedArticle.fromJson(Map<String, dynamic> json) => SavedArticle(
@@ -80,15 +93,17 @@ class SavedArticle {
         createdAt: DateTime.parse(json['createdAt'] as String),
         description: json['description'] as String?,
         isSynced: json['isSynced'] as bool? ?? false,
+        isFavorite: json['isFavorite'] as bool? ?? false,
       );
 
-  SavedArticle copyWith({bool? isSynced, String? imagePath}) => SavedArticle(
+  SavedArticle copyWith({bool? isSynced, String? imagePath, bool? isFavorite}) => SavedArticle(
         id: id,
         imagePath: imagePath ?? this.imagePath,
         category: category,
         createdAt: createdAt,
         description: description,
         isSynced: isSynced ?? this.isSynced,
+        isFavorite: isFavorite ?? this.isFavorite,
       );
 }
 
@@ -106,8 +121,17 @@ class SavedOutfitsService {
     if (_instance == null) {
       _instance = SavedOutfitsService._();
       _prefs = await SharedPreferences.getInstance();
+    } else {
+      // Refresh prefs in case they were updated
+      _prefs = await SharedPreferences.getInstance();
     }
     return _instance!;
+  }
+
+  /// Reset the singleton instance (call on logout)
+  static void reset() {
+    _instance = null;
+    _prefs = null;
   }
 
   // ==================== OUTFITS ====================
@@ -124,7 +148,7 @@ class SavedOutfitsService {
   Future<SavedOutfit> saveOutfitFromUrl(String imageUrl, {String? description}) async {
     final dio = Dio();
     final outfitsDir = await _getOutfitsDirectory();
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final id = _uuid.v4();
     final fileName = 'outfit_$id.jpg';
     final filePath = '${outfitsDir.path}/$fileName';
 
@@ -142,8 +166,8 @@ class SavedOutfitsService {
     // Save to local cache
     await _addOutfitToPrefs(outfit);
 
-    // Sync to Supabase if authenticated
-    if (SupabaseService.isAuthenticated) {
+    // Auto-sync if enabled
+    if (SupabaseService.isAuthenticated && await isAutoSyncEnabled()) {
       await _syncOutfitToCloud(outfit);
     }
 
@@ -151,12 +175,20 @@ class SavedOutfitsService {
   }
 
   Future<void> _syncOutfitToCloud(SavedOutfit outfit) async {
+    await syncSingleOutfit(outfit.id);
+  }
+
+  /// Sync a single outfit by ID - can be called from UI
+  Future<bool> syncSingleOutfit(String outfitId) async {
     try {
       final userId = SupabaseService.currentUserId;
-      if (userId == null) return;
+      if (userId == null) return false;
+
+      final outfits = await _getLocalOutfits();
+      final outfit = outfits.firstWhere((o) => o.id == outfitId, orElse: () => throw Exception('Outfit not found'));
 
       final file = File(outfit.imagePath);
-      final storagePath = '$userId/outfits/${outfit.id}.jpg';
+      final storagePath = '$userId/${outfit.id}.jpg';
 
       // Upload image to storage
       await SupabaseService.uploadFile(
@@ -175,7 +207,6 @@ class SavedOutfitsService {
       });
 
       // Update local record as synced
-      final outfits = await getSavedOutfits();
       final updatedOutfits = outfits.map((o) {
         if (o.id == outfit.id) {
           return o.copyWith(isSynced: true);
@@ -183,9 +214,10 @@ class SavedOutfitsService {
         return o;
       }).toList();
       await _saveOutfitsToPrefs(updatedOutfits);
+      return true;
     } catch (e) {
-      // Sync failed - will retry later
       print('Failed to sync outfit: $e');
+      return false;
     }
   }
 
@@ -222,7 +254,12 @@ class SavedOutfitsService {
       }
     }
 
-    validOutfits.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    // Sort: favorites first, then by date
+    validOutfits.sort((a, b) {
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return b.createdAt.compareTo(a.createdAt);
+    });
     return validOutfits;
   }
 
@@ -269,7 +306,12 @@ class SavedOutfitsService {
     }
 
     final result = merged.values.toList();
-    result.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    // Sort: favorites first, then by date
+    result.sort((a, b) {
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return b.createdAt.compareTo(a.createdAt);
+    });
     return result;
   }
 
@@ -289,7 +331,7 @@ class SavedOutfitsService {
         final userId = SupabaseService.currentUserId;
         await SupabaseService.deleteFile(
           bucket: 'outfits',
-          path: '$userId/outfits/$id.jpg',
+          path: '$userId/$id.jpg',
         );
         await SupabaseService.client.from('outfits').delete().eq('id', id);
       } catch (e) {
@@ -312,6 +354,17 @@ class SavedOutfitsService {
     await _prefs?.setString(_outfitsKey, jsonEncode(jsonList));
   }
 
+  Future<void> toggleOutfitFavorite(String id) async {
+    final outfits = await _getLocalOutfits();
+    final updatedOutfits = outfits.map((o) {
+      if (o.id == id) {
+        return o.copyWith(isFavorite: !o.isFavorite);
+      }
+      return o;
+    }).toList();
+    await _saveOutfitsToPrefs(updatedOutfits);
+  }
+
   // ==================== ARTICLES ====================
 
   Future<Directory> _getArticlesDirectory() async {
@@ -330,7 +383,7 @@ class SavedOutfitsService {
   }) async {
     final dio = Dio();
     final articlesDir = await _getArticlesDirectory();
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final id = _uuid.v4();
     final fileName = 'article_${category}_$id.jpg';
     final filePath = '${articlesDir.path}/$fileName';
 
@@ -347,7 +400,8 @@ class SavedOutfitsService {
 
     await _addArticleToPrefs(article);
 
-    if (SupabaseService.isAuthenticated) {
+    // Auto-sync if enabled
+    if (SupabaseService.isAuthenticated && await isAutoSyncEnabled()) {
       await _syncArticleToCloud(article);
     }
 
@@ -360,7 +414,7 @@ class SavedOutfitsService {
     String? description,
   }) async {
     final articlesDir = await _getArticlesDirectory();
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final id = _uuid.v4();
     final fileName = 'article_${category}_$id.jpg';
     final filePath = '${articlesDir.path}/$fileName';
 
@@ -377,7 +431,8 @@ class SavedOutfitsService {
 
     await _addArticleToPrefs(article);
 
-    if (SupabaseService.isAuthenticated) {
+    // Auto-sync if enabled
+    if (SupabaseService.isAuthenticated && await isAutoSyncEnabled()) {
       await _syncArticleToCloud(article);
     }
 
@@ -385,12 +440,20 @@ class SavedOutfitsService {
   }
 
   Future<void> _syncArticleToCloud(SavedArticle article) async {
+    await syncSingleArticle(article.id);
+  }
+
+  /// Sync a single article by ID - can be called from UI
+  Future<bool> syncSingleArticle(String articleId) async {
     try {
       final userId = SupabaseService.currentUserId;
-      if (userId == null) return;
+      if (userId == null) return false;
+
+      final articles = await _getLocalArticles();
+      final article = articles.firstWhere((a) => a.id == articleId, orElse: () => throw Exception('Article not found'));
 
       final file = File(article.imagePath);
-      final storagePath = '$userId/articles/${article.id}.jpg';
+      final storagePath = '$userId/${article.id}.jpg';
 
       await SupabaseService.uploadFile(
         bucket: 'articles',
@@ -407,7 +470,6 @@ class SavedOutfitsService {
         'created_at': article.createdAt.toIso8601String(),
       });
 
-      final articles = await _getLocalArticles();
       final updatedArticles = articles.map((a) {
         if (a.id == article.id) {
           return a.copyWith(isSynced: true);
@@ -415,8 +477,10 @@ class SavedOutfitsService {
         return a;
       }).toList();
       await _saveArticlesToPrefs(updatedArticles);
+      return true;
     } catch (e) {
       print('Failed to sync article: $e');
+      return false;
     }
   }
 
@@ -453,7 +517,12 @@ class SavedOutfitsService {
       }
     }
 
-    validArticles.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    // Sort: favorites first, then by date
+    validArticles.sort((a, b) {
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return b.createdAt.compareTo(a.createdAt);
+    });
     return validArticles;
   }
 
@@ -504,7 +573,12 @@ class SavedOutfitsService {
     }
 
     final result = merged.values.toList();
-    result.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    // Sort: favorites first, then by date
+    result.sort((a, b) {
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return b.createdAt.compareTo(a.createdAt);
+    });
     return result;
   }
 
@@ -522,7 +596,7 @@ class SavedOutfitsService {
         final userId = SupabaseService.currentUserId;
         await SupabaseService.deleteFile(
           bucket: 'articles',
-          path: '$userId/articles/$id.jpg',
+          path: '$userId/$id.jpg',
         );
         await SupabaseService.client.from('articles').delete().eq('id', id);
       } catch (e) {
@@ -545,20 +619,81 @@ class SavedOutfitsService {
     await _prefs?.setString(_articlesKey, jsonEncode(jsonList));
   }
 
+  Future<void> toggleArticleFavorite(String id) async {
+    final articles = await _getLocalArticles();
+    final updatedArticles = articles.map((a) {
+      if (a.id == id) {
+        return a.copyWith(isFavorite: !a.isFavorite);
+      }
+      return a;
+    }).toList();
+    await _saveArticlesToPrefs(updatedArticles);
+  }
+
   // ==================== SYNC ====================
 
+  /// Check if user has been asked about cloud sync
+  static Future<bool> hasAskedAboutSync() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_cloudSyncAskedKey) ?? false;
+  }
+
+  /// Mark that user has been asked about cloud sync
+  static Future<void> setAskedAboutSync() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_cloudSyncAskedKey, true);
+  }
+
+  /// Check if auto-sync is enabled
+  static Future<bool> isAutoSyncEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_cloudSyncEnabledKey) ?? false;
+  }
+
+  /// Enable or disable auto-sync
+  static Future<void> setAutoSyncEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_cloudSyncEnabledKey, enabled);
+  }
+
+  /// Get count of unsynced items
+  Future<int> getUnsyncedCount() async {
+    final outfits = await _getLocalOutfits();
+    final articles = await _getLocalArticles();
+    return outfits.where((o) => !o.isSynced).length +
+        articles.where((a) => !a.isSynced).length;
+  }
+
   /// Sync all unsynced items to cloud
-  Future<void> syncToCloud() async {
-    if (!SupabaseService.isAuthenticated) return;
+  /// Returns the number of items synced
+  Future<int> syncToCloud({
+    void Function(int current, int total)? onProgress,
+  }) async {
+    if (!SupabaseService.isAuthenticated) return 0;
 
     final outfits = await _getLocalOutfits();
-    for (final outfit in outfits.where((o) => !o.isSynced)) {
-      await _syncOutfitToCloud(outfit);
-    }
+    final unsyncedOutfits = outfits.where((o) => !o.isSynced).toList();
 
     final articles = await _getLocalArticles();
-    for (final article in articles.where((a) => !a.isSynced)) {
-      await _syncArticleToCloud(article);
+    final unsyncedArticles = articles.where((a) => !a.isSynced).toList();
+
+    final total = unsyncedOutfits.length + unsyncedArticles.length;
+    if (total == 0) return 0;
+
+    int synced = 0;
+
+    for (final outfit in unsyncedOutfits) {
+      await _syncOutfitToCloud(outfit);
+      synced++;
+      onProgress?.call(synced, total);
     }
+
+    for (final article in unsyncedArticles) {
+      await _syncArticleToCloud(article);
+      synced++;
+      onProgress?.call(synced, total);
+    }
+
+    return synced;
   }
 }

@@ -106,7 +106,7 @@ class FitRoomProvider implements AIProvider {
       // Enable HD mode for better quality
       formData.fields.add(const MapEntry('hd_mode', 'true'));
 
-      onProgress?.call(0.2, 'Submitting to FitRoom...');
+      onProgress?.call(0.2, 'Uploading images...');
 
       // Create try-on task
       final response = await _dio.post(
@@ -121,7 +121,7 @@ class FitRoomProvider implements AIProvider {
         final data = response.data;
         final taskId = data['task_id'] as String;
 
-        onProgress?.call(0.3, 'Processing try-on...');
+        onProgress?.call(0.3, 'Creating your look...');
 
         // Poll for result
         final resultUrl = await _pollForResult(taskId, onProgress);
