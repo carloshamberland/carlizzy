@@ -9,9 +9,6 @@ echo "Installing Flutter..."
 git clone https://github.com/flutter/flutter.git --depth 1 -b stable "$HOME/flutter"
 export PATH="$PATH:$HOME/flutter/bin"
 
-# Run Flutter doctor
-flutter doctor
-
 echo "Running flutter pub get..."
 cd "$CI_PRIMARY_REPOSITORY_PATH"
 flutter pub get
